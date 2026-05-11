@@ -25,11 +25,20 @@ const (
 	Dead
 )
 
+type Phase int
+
+const (
+	Map = iota
+	Reduce
+)
+
 type Master struct {
 	Workers []Worker
 	Tasks   []Task
 	NReduce int
 	Mu      sync.Mutex
+	Pattern string
+	Phase   Phase
 }
 
 type Worker struct {
@@ -55,6 +64,7 @@ type GetTaskResults struct {
 	Type         TaskType
 	FileLocation string
 	NReduce      int
+	Pattern      string
 	TaskFound    bool
 }
 
