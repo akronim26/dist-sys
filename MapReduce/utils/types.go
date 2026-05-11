@@ -1,4 +1,6 @@
-package main
+package utils
+
+import "sync"
 
 type TaskType int
 
@@ -26,6 +28,8 @@ const (
 type Master struct {
 	Workers []Worker
 	Tasks   []Task
+	NReduce int
+	Mu      sync.Mutex
 }
 
 type Worker struct {
@@ -39,4 +43,26 @@ type Task struct {
 	Status       TaskStatus
 	WorkerId     int
 	FileLocation string
+	NReduce      int
+}
+
+type GetTaskArgs struct {
+	WorkerId int
+}
+
+type GetTaskResults struct {
+	TaskId       int
+	Type         TaskType
+	FileLocation string
+	NReduce      int
+	TaskFound    bool
+}
+
+type TaskDoneResults struct {
+	Success bool
+}
+
+type TaskDoneArgs struct {
+	TaskId   int
+	WorkerId int
 }
