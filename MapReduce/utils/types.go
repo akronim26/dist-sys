@@ -76,3 +76,8 @@ type TaskDoneArgs struct {
 	TaskId   int
 	WorkerId int
 }
+
+type KeyValue struct {
+	Key   string
+	Value string
+}
