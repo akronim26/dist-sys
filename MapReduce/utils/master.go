@@ -49,6 +49,20 @@ func (m *Master) ReportTaskDone(args *TaskDoneArgs, reply *TaskDoneResults) erro
 			m.Tasks[i].Status = Completed
 			m.Tasks[i].WorkerId = 0
 			reply.Success = true
+			m.MapTasksCompleted++
+
+			if m.MapTasksCompleted == m.MapTasksTotal {
+				m.Phase = Reduce
+				m.Tasks = make([]Task, m.NReduce)
+
+				for i := 0; i < m.NReduce; i++ {
+					m.Tasks[i].Id = i + 1
+					m.Tasks[i].NReduce = m.NReduce
+					m.Tasks[i].Status = Incomplete
+					m.Tasks[i].Type = ReduceTask
+				}
+			}
+
 			return nil
 		}
 	}
@@ -57,7 +71,7 @@ func (m *Master) ReportTaskDone(args *TaskDoneArgs, reply *TaskDoneResults) erro
 	return errors.New("task ID not found")
 }
 
-func MakeMaster(files []string) *Master {
+func MakeMaster(files []string, pattern string) *Master {
 	m := Master{}
 	m.Tasks = make([]Task, len(files))
 
@@ -68,6 +82,13 @@ func MakeMaster(files []string) *Master {
 		m.Tasks[i].Status = Incomplete
 		m.Tasks[i].Type = MapTask
 	}
+
+	m.Pattern = pattern
+	m.MapTasksCompleted = 0
+	m.ReduceTasksCompleted = 0
+	m.MapTasksTotal = TotalMapTasks
+	m.ReduceTasksTotal = TotalReduceTasks
+	m.NReduce = NReduce
 
 	return &m
 }

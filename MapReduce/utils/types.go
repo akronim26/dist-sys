@@ -33,12 +33,15 @@ const (
 )
 
 type Master struct {
-	Workers []Worker
-	Tasks   []Task
-	NReduce int
-	Mu      sync.Mutex
-	Pattern string
-	Phase   Phase
+	Tasks                []Task
+	NReduce              int
+	Mu                   sync.Mutex
+	Pattern              string
+	Phase                Phase
+	MapTasksTotal        int
+	MapTasksCompleted    int
+	ReduceTasksTotal     int
+	ReduceTasksCompleted int
 }
 
 type Worker struct {

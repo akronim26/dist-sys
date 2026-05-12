@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"net/rpc"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 func (w *Worker) Start(workerId int) error {
@@ -25,20 +28,21 @@ func (w *Worker) Start(workerId int) error {
 		}
 
 		reply := GetTaskResults{}
-		intermediateFiles := make([][]KeyValue, reply.NReduce)
 
 		err = client.Call("Master.RequestTask", args, &reply)
 		if err != nil {
 			return errors.New("internal error: " + err.Error())
 		}
+		intermediateFiles := make([][]KeyValue, reply.NReduce)
 
-		if reply.Type == MapTask {
+		if !reply.TaskFound {
+			time.Sleep(time.Second)
+			continue
+		} else if reply.Type == MapTask {
 			file, err := os.Open(reply.FileLocation)
 			if err != nil {
 				return errors.New("error while opening the file")
 			}
-
-			defer file.Close()
 
 			scanner := bufio.NewScanner(file)
 
@@ -55,6 +59,8 @@ func (w *Worker) Start(workerId int) error {
 				}
 			}
 
+			file.Close()
+
 			for i := 0; i < reply.NReduce; i++ {
 				fileName := fmt.Sprintf("mr-%d-%d", reply.TaskId, i)
 				file, err := os.Create(fileName)
@@ -62,12 +68,13 @@ func (w *Worker) Start(workerId int) error {
 				if err != nil {
 					return errors.New("error while creating file")
 				}
-				defer file.Close()
 
 				enc := json.NewEncoder(file)
 				for _, kv := range intermediateFiles[i] {
 					enc.Encode(&kv)
 				}
+
+				file.Close()
 			}
 
 			err = scanner.Err()
@@ -75,6 +82,50 @@ func (w *Worker) Start(workerId int) error {
 				return errors.New("internal error: " + err.Error())
 			}
 
+		} else if reply.Type == ReduceTask {
+			files, err := filepath.Glob(fmt.Sprintf("mr-*-%d", reply.TaskId))
+			if err != nil {
+				return errors.New("error while fetching the assigned files")
+			}
+
+			var allMatches []string
+
+			for _, val := range files {
+				file, err := os.Open(val)
+				if err != nil {
+					return errors.New("error while opening the file")
+				}
+
+				var kv KeyValue
+
+				for {
+
+					err = json.NewDecoder(file).Decode(&kv)
+
+					if err == io.EOF {
+						break
+					}
+
+					if err != nil {
+						return errors.New("error while decoding")
+					}
+
+					allMatches = append(allMatches, kv.Value)
+				}
+				file.Close()
+
+			}
+			file, err := os.Create(fmt.Sprintf("mr-final-%d", reply.TaskId))
+			if err != nil {
+				return errors.New("error while creating file")
+			}
+
+			err = os.WriteFile(fmt.Sprintf("mr-final-%d", reply.TaskId), []byte(strings.Join(allMatches, "\n")), 0644)
+			if err != nil {
+				return errors.New("error while writing the file")
+			}
+
+			file.Close()
 		}
 
 		taskDoneArgs := TaskDoneArgs{
