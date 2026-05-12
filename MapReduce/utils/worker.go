@@ -14,6 +14,7 @@ import (
 	"time"
 )
 
+// Start initializes the worker and enters a polling loop to request and execute tasks.
 func (w *Worker) Start(workerId int) {
 	client, err := rpc.DialHTTP("tcp", "localhost:5000")
 	if err != nil {
@@ -55,6 +56,8 @@ func (w *Worker) Start(workerId int) {
 	}
 }
 
+// doMap performs the map task: it reads an input file, filters lines by pattern,
+// and partitions results into intermediate files for reducers.
 func (w *Worker) doMap(workerId int, reply *GetTaskResults) {
 	fmt.Printf("Worker %d: Starting Map Task %d on %s\n", workerId, reply.TaskId, reply.FileLocation)
 
@@ -87,6 +90,8 @@ func (w *Worker) doMap(workerId int, reply *GetTaskResults) {
 	}
 }
 
+// doReduce performs the reduce task: it gathers intermediate files,
+// aggregates matching lines, and writes the final output for its partition.
 func (w *Worker) doReduce(workerId int, reply *GetTaskResults) {
 	fmt.Printf("Worker %d: Starting Reduce Task %d\n", workerId, reply.TaskId)
 
@@ -126,6 +131,7 @@ func (w *Worker) doReduce(workerId int, reply *GetTaskResults) {
 	}
 }
 
+// ihash is a helper function to map a string key to a deterministic integer bucket.
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))

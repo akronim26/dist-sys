@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// RequestTask handles RPC requests from workers for a new task.
+// It searches for an incomplete task and assigns it to the requesting worker.
 func (m *Master) RequestTask(args *GetTaskArgs, reply *GetTaskResults) error {
 	if args == nil {
 		return errors.New("arguments cannot be nil")
@@ -43,6 +45,8 @@ func (m *Master) RequestTask(args *GetTaskArgs, reply *GetTaskResults) error {
 	reply.TaskFound = false
 	return nil
 }
+// ReportTaskDone handles RPC notifications from workers that a task is finished.
+// It updates the task status and triggers phase transitions if necessary.
 func (m *Master) ReportTaskDone(args *TaskDoneArgs, reply *TaskDoneResults) error {
 	if args == nil {
 		return errors.New("arguments cannot be nil")
@@ -73,6 +77,8 @@ func (m *Master) ReportTaskDone(args *TaskDoneArgs, reply *TaskDoneResults) erro
 	return errors.New("task ID not found")
 }
 
+// transitionToReduce switches the system from the Map phase to the Reduce phase.
+// It generates a new set of tasks for reducers to process.
 func (m *Master) transitionToReduce() {
 	m.Phase = ReducePhase
 	m.Tasks = make([]Task, m.NReduce)
@@ -86,6 +92,7 @@ func (m *Master) transitionToReduce() {
 	fmt.Println("All Map tasks finished. Transitioning to Reduce phase...")
 }
 
+// MakeMaster initializes a new Master instance with the given input files and search pattern.
 func MakeMaster(files []string, pattern string) *Master {
 	m := Master{
 		Pattern:       pattern,
@@ -109,6 +116,7 @@ func MakeMaster(files []string, pattern string) *Master {
 	return &m
 }
 
+// Serve starts the RPC server and listens for incoming worker connections.
 func (m *Master) Serve(address string) {
 	rpc.Register(m)
 	rpc.HandleHTTP()
@@ -120,6 +128,8 @@ func (m *Master) Serve(address string) {
 	http.Serve(listener, nil)
 }
 
+// watcher runs in a separate goroutine and periodically checks for timed-out tasks.
+// If a task takes too long, it is reset to Incomplete so another worker can pick it up.
 func (m *Master) watcher() {
 	for {
 		time.Sleep(2 * time.Second)

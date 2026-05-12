@@ -71,7 +71,7 @@ type GetTaskResults struct {
 	Pattern      string
 	NReduce      int
 	TaskFound    bool
-	Done         bool 
+	Done         bool
 }
 
 type TaskDoneResults struct {

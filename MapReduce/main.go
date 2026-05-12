@@ -7,6 +7,8 @@ import (
 	"strconv"
 )
 
+// main is the entry point for the MapReduce system.
+// It uses command-line arguments to determine whether to run in master or worker mode.
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: go run main.go [master|worker] ...")
@@ -17,6 +19,7 @@ func main() {
 
 	switch mode {
 	case "master":
+		// Master mode: initializes the master with a search pattern and input files.
 		if len(os.Args) < 4 {
 			fmt.Println("Usage: go run main.go master [pattern] [files...]")
 			os.Exit(1)
@@ -29,6 +32,7 @@ func main() {
 		m.Serve(":5000")
 
 	case "worker":
+		// Worker mode: initializes a worker that polls the master for map/reduce tasks.
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: go run main.go worker [worker_id]")
 			os.Exit(1)
