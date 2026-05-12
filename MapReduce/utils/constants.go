@@ -1,7 +1,6 @@
 package utils
 
 const (
-	NReduce          = 10
-	TotalMapTasks    = 1000
-	TotalReduceTasks = 20
+	NReduce         = 10
+	TimeoutInterval = 10
 )

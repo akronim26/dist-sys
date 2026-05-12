@@ -3,10 +3,10 @@ package utils
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
+	"log"
 	"net/rpc"
 	"os"
 	"path/filepath"
@@ -14,134 +14,115 @@ import (
 	"time"
 )
 
-func (w *Worker) Start(workerId int) error {
-	client, err := rpc.DialHTTP("tcp", ":5000")
+func (w *Worker) Start(workerId int) {
+	client, err := rpc.DialHTTP("tcp", "localhost:5000")
 	if err != nil {
-		return errors.New("failed to connect with client")
+		log.Fatalf("Worker %d failed to connect to master: %v", workerId, err)
 	}
-
 	defer client.Close()
 
-	for {
-		args := GetTaskArgs{
-			WorkerId: workerId,
-		}
+	fmt.Printf("Worker %d started.\n", workerId)
 
+	for {
+		args := GetTaskArgs{WorkerId: workerId}
 		reply := GetTaskResults{}
 
-		err = client.Call("Master.RequestTask", args, &reply)
+		err := client.Call("Master.RequestTask", &args, &reply)
 		if err != nil {
-			return errors.New("internal error: " + err.Error())
+			fmt.Printf("Worker %d: RPC call failed, exiting: %v\n", workerId, err)
+			return
 		}
-		intermediateFiles := make([][]KeyValue, reply.NReduce)
+
+		if reply.Done {
+			fmt.Printf("Worker %d: Job complete. Exiting.\n", workerId)
+			return
+		}
 
 		if !reply.TaskFound {
 			time.Sleep(time.Second)
 			continue
-		} else if reply.Type == MapTask {
-			file, err := os.Open(reply.FileLocation)
-			if err != nil {
-				return errors.New("error while opening the file")
-			}
-
-			scanner := bufio.NewScanner(file)
-
-			for scanner.Scan() {
-				line := scanner.Text()
-				if strings.Contains(line, reply.Pattern) {
-					kv := KeyValue{
-						Key:   reply.Pattern,
-						Value: line,
-					}
-
-					bucketIndex := ihash(kv.Key) % reply.NReduce
-					intermediateFiles[bucketIndex] = append(intermediateFiles[bucketIndex], kv)
-				}
-			}
-
-			file.Close()
-
-			for i := 0; i < reply.NReduce; i++ {
-				fileName := fmt.Sprintf("mr-%d-%d", reply.TaskId, i)
-				file, err := os.Create(fileName)
-
-				if err != nil {
-					return errors.New("error while creating file")
-				}
-
-				enc := json.NewEncoder(file)
-				for _, kv := range intermediateFiles[i] {
-					enc.Encode(&kv)
-				}
-
-				file.Close()
-			}
-
-			err = scanner.Err()
-			if err != nil {
-				return errors.New("internal error: " + err.Error())
-			}
-
-		} else if reply.Type == ReduceTask {
-			files, err := filepath.Glob(fmt.Sprintf("mr-*-%d", reply.TaskId))
-			if err != nil {
-				return errors.New("error while fetching the assigned files")
-			}
-
-			var allMatches []string
-
-			for _, val := range files {
-				file, err := os.Open(val)
-				if err != nil {
-					return errors.New("error while opening the file")
-				}
-
-				var kv KeyValue
-
-				for {
-
-					err = json.NewDecoder(file).Decode(&kv)
-
-					if err == io.EOF {
-						break
-					}
-
-					if err != nil {
-						return errors.New("error while decoding")
-					}
-
-					allMatches = append(allMatches, kv.Value)
-				}
-				file.Close()
-
-			}
-			file, err := os.Create(fmt.Sprintf("mr-final-%d", reply.TaskId))
-			if err != nil {
-				return errors.New("error while creating file")
-			}
-
-			err = os.WriteFile(fmt.Sprintf("mr-final-%d", reply.TaskId), []byte(strings.Join(allMatches, "\n")), 0644)
-			if err != nil {
-				return errors.New("error while writing the file")
-			}
-
-			file.Close()
 		}
 
-		taskDoneArgs := TaskDoneArgs{
-			TaskId:   reply.TaskId,
-			WorkerId: workerId,
+		if reply.Type == MapTask {
+			w.doMap(workerId, &reply)
+		} else {
+			w.doReduce(workerId, &reply)
 		}
 
-		taskDoneResults := TaskDoneResults{
-			Success: false,
-		}
+		doneArgs := TaskDoneArgs{TaskId: reply.TaskId, WorkerId: workerId}
+		doneReply := TaskDoneResults{}
+		client.Call("Master.ReportTaskDone", &doneArgs, &doneReply)
+	}
+}
 
-		err = client.Call("Master.ReportTaskDone", taskDoneArgs, &taskDoneResults)
-		if err != nil || !taskDoneResults.Success {
-			return errors.New("failed to report task as done")
-		}
+func (w *Worker) doMap(workerId int, reply *GetTaskResults) {
+	fmt.Printf("Worker %d: Starting Map Task %d on %s\n", workerId, reply.TaskId, reply.FileLocation)
 
+	file, err := os.Open(reply.FileLocation)
+	if err != nil {
+		log.Printf("Worker %d: Failed to open %s: %v", workerId, reply.FileLocation, err)
+		return
+	}
+	defer file.Close()
+
+	intermediate := make([][]KeyValue, reply.NReduce)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, reply.Pattern) {
+			kv := KeyValue{Key: reply.Pattern, Value: line}
+			bucket := ihash(kv.Key) % reply.NReduce
+			intermediate[bucket] = append(intermediate[bucket], kv)
+		}
+	}
+
+	for i := 0; i < reply.NReduce; i++ {
+		oname := fmt.Sprintf("mr-%d-%d", reply.TaskId, i)
+		ofile, _ := os.Create(oname)
+		enc := json.NewEncoder(ofile)
+		for _, kv := range intermediate[i] {
+			enc.Encode(&kv)
+		}
+		ofile.Close()
+	}
+}
+
+func (w *Worker) doReduce(workerId int, reply *GetTaskResults) {
+	fmt.Printf("Worker %d: Starting Reduce Task %d\n", workerId, reply.TaskId)
+
+	files, err := filepath.Glob(fmt.Sprintf("mr-*-%d", reply.TaskId))
+	if err != nil {
+		log.Printf("Worker %d: Glob failed: %v", workerId, err)
+		return
+	}
+
+	var allMatches []string
+	for _, filename := range files {
+		file, err := os.Open(filename)
+		if err != nil {
+			continue
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err == io.EOF {
+				break
+			} else if err != nil {
+				break
+			}
+			allMatches = append(allMatches, kv.Value)
+		}
+		file.Close()
+	}
+
+	oname := fmt.Sprintf("mr-out-%d", reply.TaskId)
+	outputContent := strings.Join(allMatches, "\n")
+	if len(allMatches) > 0 {
+		outputContent += "\n"
+	}
+	err = os.WriteFile(oname, []byte(outputContent), 0644)
+	if err != nil {
+		log.Printf("Worker %d: Failed to write output %s: %v", workerId, oname, err)
 	}
 }
 

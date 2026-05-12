@@ -1,6 +1,9 @@
 package utils
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type TaskType int
 
@@ -28,20 +31,19 @@ const (
 type Phase int
 
 const (
-	Map = iota
-	Reduce
+	MapPhase = iota
+	ReducePhase
 )
 
 type Master struct {
 	Tasks                []Task
-	NReduce              int
 	Mu                   sync.Mutex
 	Pattern              string
 	Phase                Phase
-	MapTasksTotal        int
 	MapTasksCompleted    int
-	ReduceTasksTotal     int
 	ReduceTasksCompleted int
+	MapTasksTotal        int
+	NReduce              int
 }
 
 type Worker struct {
@@ -55,7 +57,7 @@ type Task struct {
 	Status       TaskStatus
 	WorkerId     int
 	FileLocation string
-	NReduce      int
+	StartTime    time.Time
 }
 
 type GetTaskArgs struct {
@@ -66,9 +68,10 @@ type GetTaskResults struct {
 	TaskId       int
 	Type         TaskType
 	FileLocation string
-	NReduce      int
 	Pattern      string
+	NReduce      int
 	TaskFound    bool
+	Done         bool 
 }
 
 type TaskDoneResults struct {

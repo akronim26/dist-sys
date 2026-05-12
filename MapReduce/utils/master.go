@@ -2,10 +2,12 @@ package utils
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
+	"time"
 )
 
 func (m *Master) RequestTask(args *GetTaskArgs, reply *GetTaskResults) error {
@@ -16,16 +18,22 @@ func (m *Master) RequestTask(args *GetTaskArgs, reply *GetTaskResults) error {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 
+	if m.Phase == ReducePhase && m.ReduceTasksCompleted == m.NReduce {
+		reply.Done = true
+		return nil
+	}
+
 	for i := range m.Tasks {
 		if m.Tasks[i].Status == Incomplete {
 			m.Tasks[i].Status = Progressing
 			m.Tasks[i].WorkerId = args.WorkerId
+			m.Tasks[i].StartTime = time.Now()
 
 			reply.TaskId = m.Tasks[i].Id
 			reply.Type = m.Tasks[i].Type
 			reply.FileLocation = m.Tasks[i].FileLocation
-			reply.NReduce = m.NReduce
 			reply.Pattern = m.Pattern
+			reply.NReduce = m.NReduce
 			reply.TaskFound = true
 
 			return nil
@@ -35,7 +43,6 @@ func (m *Master) RequestTask(args *GetTaskArgs, reply *GetTaskResults) error {
 	reply.TaskFound = false
 	return nil
 }
-
 func (m *Master) ReportTaskDone(args *TaskDoneArgs, reply *TaskDoneResults) error {
 	if args == nil {
 		return errors.New("arguments cannot be nil")
@@ -49,20 +56,15 @@ func (m *Master) ReportTaskDone(args *TaskDoneArgs, reply *TaskDoneResults) erro
 			m.Tasks[i].Status = Completed
 			m.Tasks[i].WorkerId = 0
 			reply.Success = true
-			m.MapTasksCompleted++
 
-			if m.MapTasksCompleted == m.MapTasksTotal {
-				m.Phase = Reduce
-				m.Tasks = make([]Task, m.NReduce)
-
-				for i := 0; i < m.NReduce; i++ {
-					m.Tasks[i].Id = i + 1
-					m.Tasks[i].NReduce = m.NReduce
-					m.Tasks[i].Status = Incomplete
-					m.Tasks[i].Type = ReduceTask
+			if m.Tasks[i].Type == MapTask {
+				m.MapTasksCompleted++
+				if m.MapTasksCompleted == m.MapTasksTotal {
+					m.transitionToReduce()
 				}
+			} else {
+				m.ReduceTasksCompleted++
 			}
-
 			return nil
 		}
 	}
@@ -71,38 +73,63 @@ func (m *Master) ReportTaskDone(args *TaskDoneArgs, reply *TaskDoneResults) erro
 	return errors.New("task ID not found")
 }
 
-func MakeMaster(files []string, pattern string) *Master {
-	m := Master{}
-	m.Tasks = make([]Task, len(files))
+func (m *Master) transitionToReduce() {
+	m.Phase = ReducePhase
+	m.Tasks = make([]Task, m.NReduce)
+	for i := 0; i < m.NReduce; i++ {
+		m.Tasks[i] = Task{
+			Id:     i,
+			Type:   ReduceTask,
+			Status: Incomplete,
+		}
+	}
+	fmt.Println("All Map tasks finished. Transitioning to Reduce phase...")
+}
 
-	for i, val := range files {
-		m.Tasks[i].FileLocation = val
-		m.Tasks[i].Id = i + 1
-		m.Tasks[i].NReduce = NReduce
-		m.Tasks[i].Status = Incomplete
-		m.Tasks[i].Type = MapTask
+func MakeMaster(files []string, pattern string) *Master {
+	m := Master{
+		Pattern:       pattern,
+		MapTasksTotal: len(files),
+		NReduce:       NReduce, 
+		Phase:         MapPhase,
 	}
 
-	m.Pattern = pattern
-	m.MapTasksCompleted = 0
-	m.ReduceTasksCompleted = 0
-	m.MapTasksTotal = TotalMapTasks
-	m.ReduceTasksTotal = TotalReduceTasks
-	m.NReduce = NReduce
+	m.Tasks = make([]Task, len(files))
+	for i, val := range files {
+		m.Tasks[i] = Task{
+			Id:           i,
+			Type:         MapTask,
+			Status:       Incomplete,
+			FileLocation: val,
+		}
+	}
+
+	go m.watcher()
 
 	return &m
 }
 
 func (m *Master) Serve(address string) {
-	// Resister the master
 	rpc.Register(m)
-	// Setup the standard RPC handlers
 	rpc.HandleHTTP()
-	// Listen
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatalf("error while listening: %s", err.Error())
 	}
-	// Serve
+	fmt.Printf("Master serving on %s\n", address)
 	http.Serve(listener, nil)
+}
+
+func (m *Master) watcher() {
+	for {
+		time.Sleep(2 * time.Second)
+		m.Mu.Lock()
+		for i := range m.Tasks {
+			if m.Tasks[i].Status == Progressing && time.Since(m.Tasks[i].StartTime) > time.Duration(TimeoutInterval)*time.Second {
+				fmt.Printf("Task %d (Type: %v) timed out. Resetting to Incomplete.\n", m.Tasks[i].Id, m.Tasks[i].Type)
+				m.Tasks[i].Status = Incomplete
+			}
+		}
+		m.Mu.Unlock()
+	}
 }
