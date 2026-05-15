@@ -45,6 +45,7 @@ func (m *Master) RequestTask(args *GetTaskArgs, reply *GetTaskResults) error {
 	reply.TaskFound = false
 	return nil
 }
+
 // ReportTaskDone handles RPC notifications from workers that a task is finished.
 // It updates the task status and triggers phase transitions if necessary.
 func (m *Master) ReportTaskDone(args *TaskDoneArgs, reply *TaskDoneResults) error {
@@ -97,7 +98,7 @@ func MakeMaster(files []string, pattern string) *Master {
 	m := Master{
 		Pattern:       pattern,
 		MapTasksTotal: len(files),
-		NReduce:       NReduce, 
+		NReduce:       NReduce,
 		Phase:         MapPhase,
 	}
 
